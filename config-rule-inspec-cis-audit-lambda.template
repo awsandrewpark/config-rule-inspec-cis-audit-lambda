@@ -10,7 +10,7 @@ Resources:
         #ComplianceResourceTypes:
         #  - 'AWS::EC2::Instance'
         TagKey: ComplianceBenchmark
-        TagValue: cis-dil-bemchmark
+        TagValue: cis-dil-benchmark
       Source:
         Owner: CUSTOM_LAMBDA
         SourceIdentifier:
@@ -72,7 +72,13 @@ Resources:
               - 'def evaluate_compliance(configuration_item):'
               - '    region       = configuration_item[''awsRegion'']'
               - '    ssm_client   = boto3.client(''ssm'', region_name=region)'
-              - '    myInstanceId = configuration_item[''configuration''][''instanceId'']'
+              - '    try:'
+              - '      myInstanceId = configuration_item[''configuration''][''instanceId'']'
+              - '    except TypeError:'
+              - '      return {'
+              - '        "compliance_type": "NOT_APPLICABLE",'
+              - '        "annotation": "configurationItem array is empty"'
+              - '      }'
               - ''
               - '    ssmresponse = ssm_client.send_command('
               - '             InstanceIds=[ myInstanceId ],'
@@ -93,7 +99,7 @@ Resources:
               - '                )'
               - '            myStatus = output[''Status'']'
               - '            if myStatus == ''Success'':'
-              - '                print ("The execution of cis-dil-benchmark scanning completed successfully.  I will now check whether there are NON_COMPLIANT items.")'
+              - '                print ("cis-dil-benchmark scanning completed successfully. Checking whether there are NON_COMPLIANT items.")'
               - '                message = output[''StandardOutputContent'']'
               - '                x = re.search("and 0 non-compliant",message)'
               - '                if not x:'
@@ -104,7 +110,7 @@ Resources:
               - '                    compliance_type = ''COMPLIANT'''
               - '                print (annotation)'
               - '            elif myStatus == ''Delivery Timed Out'' or myStatus == ''Execution Timed Out'' or myStatus == ''Failed'' or myStatus == ''Canceled'' or myStatus == ''Undeliverable'' or myStatus == ''Terminated'':'
-              - '                annotation = "The execution of cis-dil-benchmark scanning was not successful.  I was not able to determine the state of the " + myInstanceId + " ec2 instance.  I will mark the instance NON_COMPLIANT for now."'
+              - '                annotation = "cis-dil-benchmark scanning was not successful. I was not able to determine the state of the " + myInstanceId + " ec2 instance.  I will mark the instance NON_COMPLIANT for now."'
               - '                compliance_type = ''NON_COMPLIANT'''
               - '            break'
               - '        except ClientError as e:'
@@ -120,9 +126,16 @@ Resources:
               - '    print ("event: ",event)'
               - '    invoking_event      = json.loads(event[''invokingEvent''])'
               - '    configuration_item  = invoking_event["configurationItem"]'
-              - '    evaluation          = evaluate_compliance(configuration_item)'
-              - '    config              = boto3.client(''config'')'
+              - '    if configuration_item[''resourceType''] != "AWS::EC2::Instance":'
+              - '      print ("DEBUG: I can only evaluate EC2 instances")'
+              - '      evaluation = {'
+              - '        "compliance_type": "NOT_APPLICABLE",'
+              - '        "annotation": "Wrong type of resource"'
+              - '      }'
+              - '    else:'
+              - '      evaluation = evaluate_compliance(configuration_item)'
               - ''
+              - '    config   = boto3.client(''config'')'
               - '    response = config.put_evaluations('
               - '       Evaluations=['
               - '           {'
@@ -151,18 +164,43 @@ Resources:
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AmazonEC2FullAccess'
-        - 'arn:aws:iam::aws:policy/AmazonSSMFullAccess'
         - 'arn:aws:iam::aws:policy/AWSLambdaExecute'
         - 'arn:aws:iam::aws:policy/service-role/AWSConfigRulesExecutionRole'
-      Policies: []
+      Policies:
+        -
+          PolicyName: "ssm-and-config-permission-requirements"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: 
+                  - "ssm:UpdateInstanceInformation"
+                  - "ssm:SendCommand"
+                  - "ssm:GetCommandInvocation"
+                  - "config:PutEvaluations"
+                Resource: "*"
   EC2RoleforSSM:
     Type: 'AWS::IAM::Role'
     Properties:
       Path: /
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM'
-        - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        -
+          PolicyName: "ssm-permission-requirement"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: [
+                  "ssm:UpdateInstanceInformation",
+                  "ssm:UpdateInstanceAssociationStatus",
+                  "ssm:PutComplianceItems",
+                  "ssm:PutInventory"
+                ]
+                Resource: "*"
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -170,9 +208,6 @@ Resources:
             Principal:
               Service:
                 - ec2.amazonaws.com
-                - ssm.amazonaws.com
-              AWS:
-                - !GetAtt LambdaIamRole.Arn
             Action:
               - 'sts:AssumeRole'
       RoleName: 'EC2RoleforSSM'
