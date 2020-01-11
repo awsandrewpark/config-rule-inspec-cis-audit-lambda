@@ -1,3 +1,13 @@
+
+#
+# This file made available under CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/legalcode)
+#
+# Description: Checks Operating Systems for CIS Compliance - 
+# Trigger Type: Change Triggered
+# Scope of Changes: AWS::EC2::Instance - 
+#
+
+
 import boto3
 import botocore
 import json
@@ -9,7 +19,13 @@ from botocore.exceptions import ClientError
 def evaluate_compliance(configuration_item):
     region       = configuration_item['awsRegion']
     ssm_client   = boto3.client('ssm', region_name=region)
-    myInstanceId = configuration_item['configuration']['instanceId']
+    try:
+      myInstanceId = configuration_item['configuration']['instanceId']
+    except TypeError:
+      return {
+        "compliance_type": "NOT_APPLICABLE",
+        "annotation": "configurationItem array is empty"
+      }
 
     ssmresponse = ssm_client.send_command(
              InstanceIds=[ myInstanceId ],
@@ -30,7 +46,7 @@ def evaluate_compliance(configuration_item):
                 )
             myStatus = output['Status']
             if myStatus == 'Success':
-                print ("The execution of cis-dil-benchmark scanning completed successfully.  I will now check whether there are NON_COMPLIANT items.")
+                print ("cis-dil-benchmark scanning completed successfully. Checking whether there are NON_COMPLIANT items.")
                 message = output['StandardOutputContent']
                 x = re.search("and 0 non-compliant",message)
                 if not x:
@@ -41,7 +57,7 @@ def evaluate_compliance(configuration_item):
                     compliance_type = 'COMPLIANT'
                 print (annotation)
             elif myStatus == 'Delivery Timed Out' or myStatus == 'Execution Timed Out' or myStatus == 'Failed' or myStatus == 'Canceled' or myStatus == 'Undeliverable' or myStatus == 'Terminated':
-                annotation = "The execution of cis-dil-benchmark scanning was not successful.  I was not able to determine the state of the " + myInstanceId + " ec2 instance.  I will mark the instancer NON_COMPLIANT for now."
+                annotation = "cis-dil-benchmark scanning was not successful. I was not able to determine the state of the " + myInstanceId + " ec2 instance.  I will mark the instance NON_COMPLIANT for now."
                 compliance_type = 'NON_COMPLIANT'
             break
         except ClientError as e:
@@ -57,16 +73,23 @@ def lambda_handler(event, context):
     print ("event: ",event)
     invoking_event      = json.loads(event['invokingEvent'])
     configuration_item  = invoking_event["configurationItem"]
-    evaluation          = evaluate_compliance(configuration_item)
-    config              = boto3.client('config')
+    if configuration_item['resourceType'] != "AWS::EC2::Instance":
+      print ("DEBUG: I can only evaluate EC2 instances")
+      evaluation = {
+        "compliance_type": "NOT_APPLICABLE",
+        "annotation": "Wrong type of resource"
+      }
+    else:
+      evaluation = evaluate_compliance(configuration_item)
 
+    config   = boto3.client('config')
     response = config.put_evaluations(
        Evaluations=[
            {
                'ComplianceResourceType':    invoking_event['configurationItem']['resourceType'],
                'ComplianceResourceId':      invoking_event['configurationItem']['resourceId'],
                'ComplianceType':            evaluation["compliance_type"],
-               "Annotation":                evaluation["annotation"],
+               'Annotation':                evaluation["annotation"],
                'OrderingTimestamp':         invoking_event['configurationItem']['configurationItemCaptureTime']
            },
        ],
