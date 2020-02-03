@@ -149,7 +149,6 @@ Resources:
               - '       ResultToken=event[''resultToken''])'
               - ''
       Timeout: 900
-    DependsOn: LambdaIamRole
   LambdaIamRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -186,21 +185,6 @@ Resources:
       Path: /
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
-      Policies:
-        -
-          PolicyName: "ssm-permission-requirement"
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              -
-                Effect: "Allow"
-                Action: [
-                  "ssm:UpdateInstanceInformation",
-                  "ssm:UpdateInstanceAssociationStatus",
-                  "ssm:PutComplianceItems",
-                  "ssm:PutInventory"
-                ]
-                Resource: "*"
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
